@@ -374,7 +374,7 @@ app.post('/api/line/test', async (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'build')));
   // SPA フォールバック（/api/* 以外はすべて index.html へ）
-  app.get('*', (req, res) => {
+  app.get('/{*path}', (req, res) => {
     res.sendFile(path.join(__dirname, 'build', 'index.html'));
   });
 }
