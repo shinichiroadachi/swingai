@@ -1,0 +1,24 @@
+# 環境変数（APIキー等を含むため必ず除外）
+.env
+
+# 依存パッケージ
+node_modules/
+
+# React ビルド成果物
+build/
+
+# SQLite データベース
+*.db
+*.db-journal
+
+# macOS システムファイル
+.DS_Store
+
+# エディタ設定
+.vscode/
+.idea/
+
+# ログ
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
