@@ -72,6 +72,10 @@ export default function App() {
   const [aiText, setAiText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
 
+  // ATRベース損切・利確 倍率スライダー
+  const [atrLossMult, setAtrLossMult] = useState(1.5);
+  const [atrGainMult, setAtrGainMult] = useState(3.0);
+
   const doAnalyze = useCallback(async (sym) => {
     if (!sym) return;
     setStatus('loading');
@@ -399,31 +403,79 @@ export default function App() {
             )}
 
             {/* Purchase plan */}
-            <section className="card purchase-card">
-              <div className="chart-title">💴 購入プラン (予算: ¥{budget.toLocaleString()})</div>
-              <div className="purchase-grid">
-                <div className="purchase-item">
-                  <div className="p-label">最大購入株数</div>
-                  <div className="p-value big green">{maxShares.toLocaleString()}<span className="p-unit">株</span></div>
-                </div>
-                <div className="purchase-item">
-                  <div className="p-label">必要資金</div>
-                  <div className="p-value blue">¥{Math.round(totalCost).toLocaleString()}</div>
-                </div>
-                <div className="purchase-item">
-                  <div className="p-label">残余資金</div>
-                  <div className="p-value gray">¥{Math.round(budget - totalCost).toLocaleString()}</div>
-                </div>
-                <div className="purchase-item">
-                  <div className="p-label">仮損切ライン (-5%)</div>
-                  <div className="p-value red">{fmt(ind.price * 0.95)}</div>
-                </div>
-                <div className="purchase-item">
-                  <div className="p-label">仮利確ライン (+10%)</div>
-                  <div className="p-value green">{fmt(ind.price * 1.10)}</div>
-                </div>
-              </div>
-            </section>
+            {(() => {
+              const lastATR = chartData.length > 0 ? chartData[chartData.length - 1].atr : null;
+              const stopLossPrice   = lastATR ? ind.price - lastATR * atrLossMult : ind.price * 0.95;
+              const takeProfitPrice = lastATR ? ind.price + lastATR * atrGainMult : ind.price * 1.10;
+              const riskRewardRatio = atrGainMult / atrLossMult;
+              return (
+                <section className="card purchase-card">
+                  <div className="chart-title">💴 購入プラン (予算: ¥{budget.toLocaleString()})</div>
+                  <div className="purchase-grid">
+                    <div className="purchase-item">
+                      <div className="p-label">最大購入株数</div>
+                      <div className="p-value big green">{maxShares.toLocaleString()}<span className="p-unit">株</span></div>
+                    </div>
+                    <div className="purchase-item">
+                      <div className="p-label">必要資金</div>
+                      <div className="p-value blue">¥{Math.round(totalCost).toLocaleString()}</div>
+                    </div>
+                    <div className="purchase-item">
+                      <div className="p-label">残余資金</div>
+                      <div className="p-value gray">¥{Math.round(budget - totalCost).toLocaleString()}</div>
+                    </div>
+                    <div className="purchase-item">
+                      <div className="p-label">
+                        損切ライン {lastATR ? `(ATR×${atrLossMult})` : '(-5%)'}
+                      </div>
+                      <div className="p-value red">{fmt(stopLossPrice)}</div>
+                    </div>
+                    <div className="purchase-item">
+                      <div className="p-label">
+                        利確ライン {lastATR ? `(ATR×${atrGainMult})` : '(+10%)'}
+                      </div>
+                      <div className="p-value green">{fmt(takeProfitPrice)}</div>
+                    </div>
+                    {lastATR && (
+                      <div className="purchase-item" style={{ gridColumn: '1 / -1' }}>
+                        <div className="p-label">ATR(14日): {lastATR.toFixed(isJPY ? 0 : 2)} {stockInfo?.currency || ''} &nbsp;|&nbsp; リスク・リワード比: 1 : {riskRewardRatio.toFixed(1)}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {lastATR && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <label style={{ fontSize: 12, color: '#8b949e', minWidth: 120 }}>
+                          損切倍率: <strong style={{ color: '#f85149' }}>{atrLossMult}×</strong>
+                        </label>
+                        <input type="range" min="0.5" max="3" step="0.1"
+                          value={atrLossMult}
+                          onChange={e => setAtrLossMult(Number(e.target.value))}
+                          style={{ flex: 1, accentColor: '#f85149' }}
+                        />
+                        <span style={{ fontSize: 11, color: '#8b949e', minWidth: 80, textAlign: 'right' }}>
+                          {fmt(stopLossPrice)}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <label style={{ fontSize: 12, color: '#8b949e', minWidth: 120 }}>
+                          利確倍率: <strong style={{ color: '#3fb950' }}>{atrGainMult}×</strong>
+                        </label>
+                        <input type="range" min="1" max="6" step="0.5"
+                          value={atrGainMult}
+                          onChange={e => setAtrGainMult(Number(e.target.value))}
+                          style={{ flex: 1, accentColor: '#3fb950' }}
+                        />
+                        <span style={{ fontSize: 11, color: '#8b949e', minWidth: 80, textAlign: 'right' }}>
+                          {fmt(takeProfitPrice)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              );
+            })()}
 
             {/* AI Advice */}
             <section className="card">
@@ -436,10 +488,13 @@ export default function App() {
               </div>
             </section>
 
-            <p className="disclaimer">
-              ⚠️ 本ツールは教育・参考目的です。投資判断は自己責任で行ってください。
+            <div className="disclaimer">
+              <strong>⚠️ 免責事項</strong><br/>
+              本ツールは情報提供・教育目的のみを目的としており、<strong>投資助言・投資勧誘には該当しません</strong>。
+              表示される分析結果・シグナルは過去のデータに基づく参考情報であり、将来の値動きを保証するものではありません。
+              投資判断は必ずご自身の責任において行ってください。
               Yahoo Finance のデータは遅延がある場合があります。
-            </p>
+            </div>
           </>
         )}
         </>

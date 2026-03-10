@@ -3,8 +3,30 @@ const express = require('express');
 const cors = require('cors');
 const https = require('https');
 const http  = require('http');
+const path  = require('path');
+const cron  = require('node-cron');
 const YahooFinanceLib = require('yahoo-finance2').default;
 const yahooFinance = new YahooFinanceLib({ suppressNotices: ['yahooSurvey'] });
+
+// ─── SQLite 初期化 ─────────────────────────────────────────────────
+const Database = require('better-sqlite3');
+const db = new Database(process.env.DB_PATH || 'holdings.db');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS holdings (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol     TEXT    NOT NULL,
+    name       TEXT,
+    shares     REAL    NOT NULL,
+    avg_price  REAL    NOT NULL,
+    created_at TEXT    DEFAULT (datetime('now','localtime'))
+  );
+  CREATE TABLE IF NOT EXISTS alert_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol     TEXT    NOT NULL,
+    type       TEXT    NOT NULL,
+    sent_at    TEXT    DEFAULT (datetime('now','localtime'))
+  );
+`);
 
 const app = express();
 app.use(cors());
@@ -195,6 +217,167 @@ app.post('/api/kabu/order', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ─── ポートフォリオ CRUD (SQLite) ─────────────────────────────────
+// GET /api/portfolio — 全保有銘柄取得
+app.get('/api/portfolio', (req, res) => {
+  try {
+    res.json(db.prepare('SELECT * FROM holdings ORDER BY created_at DESC').all());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/portfolio — 銘柄追加
+app.post('/api/portfolio', (req, res) => {
+  try {
+    const { symbol, name, shares, avg_price } = req.body;
+    if (!symbol || shares == null || avg_price == null)
+      return res.status(400).json({ error: 'symbol, shares, avg_price は必須です' });
+    const r = db.prepare(
+      'INSERT INTO holdings (symbol, name, shares, avg_price) VALUES (?, ?, ?, ?)'
+    ).run(symbol.toUpperCase(), name || symbol.toUpperCase(), Number(shares), Number(avg_price));
+    res.json({ id: r.lastInsertRowid });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/portfolio/:id — 銘柄更新（株数・平均取得額の修正）
+app.put('/api/portfolio/:id', (req, res) => {
+  try {
+    const { shares, avg_price, name } = req.body;
+    db.prepare(
+      'UPDATE holdings SET shares=?, avg_price=?, name=COALESCE(?,name) WHERE id=?'
+    ).run(Number(shares), Number(avg_price), name || null, req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/portfolio/:id — 銘柄削除
+app.delete('/api/portfolio/:id', (req, res) => {
+  try {
+    db.prepare('DELETE FROM holdings WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── LINE Messaging API 通知 ──────────────────────────────────────
+function sendLineMessage(text) {
+  const token  = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const userId = process.env.LINE_USER_ID;
+  if (!token || !userId) return Promise.resolve({ skipped: true });
+
+  const body = JSON.stringify({
+    to: userId,
+    messages: [{ type: 'text', text }],
+  });
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.line.me',
+      path: '/v2/bot/message/push',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (apiRes) => {
+      let d = '';
+      apiRes.on('data', c => d += c);
+      apiRes.on('end', () => {
+        if (apiRes.statusCode !== 200)
+          console.error('[LINE] 送信失敗:', apiRes.statusCode, d);
+        resolve({ status: apiRes.statusCode });
+      });
+    });
+    req.on('error', (e) => { console.error('[LINE] リクエストエラー:', e.message); resolve({ error: e.message }); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// 重複通知防止: { "1332.T_stop_2026-03-10" } のSetで当日同一アラートをブロック
+const _sentAlerts = new Set();
+function alertKey(symbol, type) {
+  const d = new Date().toISOString().slice(0, 10);
+  return `${symbol}_${type}_${d}`;
+}
+
+// 価格アラートチェック（node-cron から呼び出し）
+async function checkPriceAlerts() {
+  let holdings = [];
+  try {
+    holdings = db.prepare('SELECT * FROM holdings').all();
+  } catch { return; }
+  if (holdings.length === 0) return;
+
+  console.log(`[cron] 価格アラートチェック開始 — ${holdings.length}銘柄`);
+  for (const h of holdings) {
+    let currentPrice;
+    try {
+      const q = await yahooFinance.quote(h.symbol);
+      currentPrice = q.regularMarketPrice;
+    } catch (e) {
+      console.error(`[cron] ${h.symbol} 価格取得失敗:`, e.message);
+      continue;
+    }
+
+    const stopPrice   = h.avg_price * 0.95;   // デフォルト -5%
+    const profitPrice = h.avg_price * 1.10;   // デフォルト +10%
+
+    if (currentPrice <= stopPrice) {
+      const key = alertKey(h.symbol, 'stop');
+      if (!_sentAlerts.has(key)) {
+        _sentAlerts.add(key);
+        const msg = `⚠️ 損切アラート\n${h.symbol}\n現在値: ¥${Math.round(currentPrice).toLocaleString()}\n損切ライン: ¥${Math.round(stopPrice).toLocaleString()}\n（取得単価比 -5%）`;
+        await sendLineMessage(msg);
+        console.log(`[cron] 損切アラート送信: ${h.symbol}`);
+      }
+    }
+    if (currentPrice >= profitPrice) {
+      const key = alertKey(h.symbol, 'profit');
+      if (!_sentAlerts.has(key)) {
+        _sentAlerts.add(key);
+        const msg = `🎯 利確アラート\n${h.symbol}\n現在値: ¥${Math.round(currentPrice).toLocaleString()}\n利確ライン: ¥${Math.round(profitPrice).toLocaleString()}\n（取得単価比 +10%）`;
+        await sendLineMessage(msg);
+        console.log(`[cron] 利確アラート送信: ${h.symbol}`);
+      }
+    }
+  }
+}
+
+// 平日 9:00〜15:30 の30分ごとに実行（サーバーのローカル時間）
+cron.schedule('*/30 9-15 * * 1-5', () => {
+  checkPriceAlerts().catch(e => console.error('[cron] エラー:', e.message));
+});
+
+// LINE 接続テスト用エンドポイント
+app.post('/api/line/test', async (req, res) => {
+  const token  = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const userId = process.env.LINE_USER_ID;
+  if (!token || !userId)
+    return res.status(400).json({ error: 'LINE_CHANNEL_ACCESS_TOKEN と LINE_USER_ID を .env に設定してください' });
+  try {
+    const result = await sendLineMessage('✅ SwingAI LINE通知テスト成功！\n設定が正しく完了しています。');
+    res.json({ ok: true, result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── React 静的ファイル配信（本番環境のみ） ──────────────────────
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, 'build')));
+  // SPA フォールバック（/api/* 以外はすべて index.html へ）
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ Proxy server running on http://localhost:${PORT}`));

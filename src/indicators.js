@@ -81,6 +81,26 @@ export const calcIchimoku = (highs, lows) => {
   return { tenkan, kijun, senkouA, senkouB };
 };
 
+// ── ATR (Average True Range) 14日 ─────────────────────────────────
+// Wilder's RMA: alpha = 1/period
+export const calcATR = (highs, lows, closes, period = 14) => {
+  if (!highs || highs.length < 2) return new Array(highs ? highs.length : 0).fill(null);
+  const trs = highs.map((h, i) => {
+    if (i === 0) return h - lows[i];
+    const pc = closes[i - 1];
+    return Math.max(h - lows[i], Math.abs(h - pc), Math.abs(lows[i] - pc));
+  });
+  const atrs = new Array(highs.length).fill(null);
+  if (trs.length >= period) {
+    // 最初のATR = 最初のperiod本のTRの単純平均
+    atrs[period - 1] = trs.slice(0, period).reduce((s, v) => s + v, 0) / period;
+    for (let i = period; i < trs.length; i++) {
+      atrs[i] = (atrs[i - 1] * (period - 1) + trs[i]) / period;
+    }
+  }
+  return atrs;
+};
+
 // ── Build chart dataset ────────────────────────────────────────────
 export const buildChartData = (prices) => {
   const closes = prices.map(p => p.close);
@@ -94,6 +114,7 @@ export const buildChartData = (prices) => {
   const boll   = calcBollinger(closes, 20);
   const stoch  = calcStochastics(highs, lows, closes);
   const ich    = calcIchimoku(highs, lows);
+  const atrArr = calcATR(highs, lows, closes, 14);
 
   return prices.map((p, i) => ({
     date:       p.date,
@@ -117,6 +138,7 @@ export const buildChartData = (prices) => {
     // 先行スパンは26期間先送りなので、表示位置を26期間ずらす
     ichSenkouA: i >= 26 ? ich.senkouA[i - 26] : null,
     ichSenkouB: i >= 26 ? ich.senkouB[i - 26] : null,
+    atr:        atrArr[i],
   }));
 };
 

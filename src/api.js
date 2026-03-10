@@ -84,7 +84,7 @@ ${fundamentals.beta          != null ? `ベータ（市場感応度）: ${fundam
 ${fundamentals.marketCap     != null ? `時価総額: ${isJPY ? '¥' : '$'}${(fundamentals.marketCap / 1e8).toFixed(0)}億` : ''}
 ${fundamentals.revenueGrowth != null ? `売上成長率: ${(fundamentals.revenueGrowth * 100).toFixed(1)}%` : ''}` : '';
 
-  const prompt = `あなたはスイングトレードの専門アナリストです。以下の実データを分析し、初心者向けに具体的なアドバイスをください。
+  const prompt = `あなたは技術指標の解説者です。投資アドバイザーではなく、投資助言・投資勧誘は行いません。以下のデータを客観的に分析し、あくまで参考情報として初心者向けに解説してください。
 
 銘柄: ${name} (${symbol})
 現在価格: ${isJPY ? '¥' : '$'}${ind.price.toLocaleString()} ${currency}
@@ -107,7 +107,7 @@ ${fundSection}
 **【利確ライン】** 具体的価格と理由
 **【ひとこと解説】** テクニカルとファンダメンタルを踏まえて初心者向けに2文で
 
-※投資助言ではなく参考情報です。`;
+※本分析は技術指標に基づく参考情報であり、投資助言・投資勧誘ではありません。投資判断はご自身の責任で行ってください。`;
 
   const res = await fetch('/api/ai', {
     method: 'POST',

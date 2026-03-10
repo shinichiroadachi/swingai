@@ -297,6 +297,9 @@ export default function Screener({ kabuStatus }) {
             )}
             {running && <span className="blink"> (スキャン中...)</span>}
           </div>
+          <p style={{ color: '#8b949e', fontSize: 11, margin: '0 0 8px 0' }}>
+            ※スコアは技術指標に基づく参考値です。投資助言・投資勧誘ではありません。投資判断はご自身の責任で行ってください。
+          </p>
           <div className="result-table-wrap">
             <table className="result-table">
               <thead>
