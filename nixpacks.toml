@@ -1,0 +1,12 @@
+[phases.setup]
+# better-sqlite3 のネイティブコンパイルに必要なツールを追加
+nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node server.js"

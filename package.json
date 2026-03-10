@@ -2,6 +2,9 @@
   "name": "swing-trader",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",
@@ -16,7 +19,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "server": "node server.js"
   },
   "browserslist": {
     "production": [
